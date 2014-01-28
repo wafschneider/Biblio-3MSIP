@@ -6,6 +6,9 @@ use Carp;
 use Class::Accessor 'antlers';
 use Socket qw(:crlf);
 use IO::Socket::INET;
+use Biblio::3MSIP::Message::sc_status;
+use Biblio::3MSIP::Message::acs_status;
+$| = 1;
 
 
 # attributes
@@ -35,6 +38,7 @@ has status_print_line => ( is => 'rw', isa => 'ArrayRef' );
 my $default_sip_version = '2.00';
 my $default_connection_method = 'socket';
 my $default_eol = $CR;
+my $default_retries_allowed = 3;
 
 # override new
 sub new {
@@ -44,6 +48,8 @@ sub new {
   $self->{'connection_method'} = $default_connection_method unless $self->connection_method;
   $self->sip_version($default_sip_version) unless $self->sip_version;
   $self->eol($default_eol) unless $self->eol;
+  $self->retries_allowed($default_retries_allowed) unless $self->retries_allowed;
+  $self->sequence(0);
   if ($self->connection_method eq 'socket') {
     unless ($self->host) {
       carp "Can't create ACS object: no host name or address";
@@ -60,18 +66,19 @@ sub new {
       carp "Can't create ACS object: couldn't connect to " . $self->host . ":" . $self->port . " : $!";
       return undef;
     }
+    binmode($socket,':utf8');
     $self->{'connection'} = $socket;
     if ($self->user || $self->password) {
       # should login before getting ACS status response
       carp "Login message unsupported";
     }
-    my $acs_status = $self->sc_status(0,undef,$self->sip_version);
-    if ($acs_status) {
-      $self->update_acs_status($acs_status);      
-    } else {
-      carp "Can't create ACS object: No ACS Status message";
-      return undef;
-    }
+#    my $acs_status = $self->sc_status(0,undef,$self->sip_version);
+#    if ($acs_status) {
+#      $self->update_acs_status($acs_status);      
+#    } else {
+#      carp "Can't create ACS object: No ACS Status message";
+#      return undef;
+#    }
   } else {
     carp "Can't create ACS object: unsupported connection method " . $self->connection_method;
     return undef;
@@ -83,15 +90,24 @@ sub sc_status {
   # create and send an SC status message
   # return ACS status message
   my ($self,$status_code,$print_width,$sip_version) = @_;
+  my $response;
   my $sc_status = Biblio::3MSIP::Message::sc_status->new(
     {
       status_code => $status_code,
       print_width => $print_width,
-      sip_version => $sip_version,
+      sip_version => $sip_version
     }
   );
-  
-  
+  my $response_str = $self->_send_message($sc_status);
+  if (substr($response_str,0,2) eq '98') {
+    $response = Biblio::3MSIP::Message::acs_status->new(
+    {
+      message_text => substr($response_str,2)
+    }
+    );
+  } else {
+    carp "SC status message didn't return ACS status response: $response_str";
+  }
 }
 
 sub update_acs_status {
@@ -108,7 +124,9 @@ sub update_acs_status {
   $self->status_update_ok($acs_status->status_update_ok);
   $self->offline_ok($acs_status->offline_ok);
   $self->acs_timeout($acs_status->acs_timeout);
-  $self->retries_allowed($acs_status->retries_allowed);
+  if ($acs_status->retries_allowed != 999) {
+    $self->retries_allowed($acs_status->retries_allowed);
+  }
   $self->sip_version($acs_status->protocol_version);
   $self->screen_message($acs_status->screen_message);
   $self->status_print_line($acs_status->print_line);
@@ -117,17 +135,37 @@ sub update_acs_status {
 
 sub _send_message {
   # private method to send message to ACS
+  # return the raw response text to calling method for parsing
   my ($self, $message) = @_;
   my $response;
   if ($self->connection_method eq 'socket') {
-    my $message_str = $message->as_string;
+    my $connection = $self->{'connection'};
+    my $message_str = sprintf('%02u',$message->message_identifier) . $message->message_text; 
     if ($self->error_detection) {
-      # add sequence and checksum
+      # TODO add sequence and checksum
     }
-    $self->connection->send($message_str . $self->eol);
-    my $response_str = <$self->connection>;
-    
-    
+    # parse $response_str to make sure it's not a 96
+    # try retries_allowed, then croak
+    my $attempt = 0;
+    until ($response) {
+      $connection->send($message_str . $self->eol);
+      $connection->recv($response,1024); # hopefully this buffer is large enough
+      $response =~ s/[\r\n]//g;
+      if (substr($response,0,2) eq '96') {
+        if ($attempt == $self->retries_allowed) {
+          croak "ACS unable to respond: $response";
+        } else {
+          carp "Resending message in response to 96 from ACS";
+          undef($response);
+          $attempt++;
+        }        
+      }
+    }
+    if ($self->error_detection) {
+      # TODO make sure sequence and checksum match
+      # strip off sequence and checksum
+      $response =~ s/(AY\d{1})?AZ.*$//;
+    }
   } else {
     carp "Can't send message: unsupported connection method " . $self->connection_method;
   }
