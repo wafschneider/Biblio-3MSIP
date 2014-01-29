@@ -23,7 +23,7 @@ has error_detection => ( is => 'rw', isa => 'Bool' );
 has sequence => ( is => 'rw', isa => 'Int' );
 has user => ( is => 'ro', isa => 'Str' );
 has password => ( is => 'ro', isa => 'Str' );
-has online => ( is => 'rw', isa => 'Bool' );
+has online_status => ( is => 'rw', isa => 'Bool' );
 has checkin_ok => ( is => 'rw', isa => 'Bool' );
 has checkout_ok => ( is => 'rw', isa => 'Bool' );
 has acs_renewal_policy => ( is => 'rw', isa => 'Bool' );
@@ -31,14 +31,18 @@ has status_update_ok => ( is => 'rw', isa => 'Bool' );
 has offline_ok => ( is => 'rw', isa => 'Bool' );
 has acs_timeout => ( is => 'rw', isa => 'Int' );
 has retries_allowed => ( is => 'rw', isa => 'Int' );
+has supported_messages => ( is => 'rw', isa => 'HashRef' );
 has screen_message => ( is => 'rw', isa => 'ArrayRef' );
 has status_print_line => ( is => 'rw', isa => 'ArrayRef' );
+has vendor_information => ( is => 'rw', isa => 'Str' );
+has print_width => ( is => 'rw', isa => 'Int' );
 
 # defaults
 my $default_sip_version = '2.00';
 my $default_connection_method = 'socket';
 my $default_eol = $CR;
 my $default_retries_allowed = 3;
+my $default_print_width = 40;
 
 # override new
 sub new {
@@ -49,8 +53,9 @@ sub new {
   $self->sip_version($default_sip_version) unless $self->sip_version;
   $self->eol($default_eol) unless $self->eol;
   $self->retries_allowed($default_retries_allowed) unless $self->retries_allowed;
+  $self->print_width($default_print_width) unless $self->print_width;
   $self->sequence(0);
-  if ($self->connection_method eq 'socket') {
+    if ($self->connection_method eq 'socket') {
     unless ($self->host) {
       carp "Can't create ACS object: no host name or address";
       return undef;
@@ -72,13 +77,13 @@ sub new {
       # should login before getting ACS status response
       carp "Login message unsupported";
     }
-#    my $acs_status = $self->sc_status(0,undef,$self->sip_version);
-#    if ($acs_status) {
-#      $self->update_acs_status($acs_status);      
-#    } else {
-#      carp "Can't create ACS object: No ACS Status message";
-#      return undef;
-#    }
+    my $acs_status = $self->sc_status(0,$self->print_width,$self->sip_version);
+    if ($acs_status) {
+      $self->update_acs_status($acs_status);      
+    } else {
+      carp "Can't create ACS object: No ACS Status message";
+      return undef;
+    }
   } else {
     carp "Can't create ACS object: unsupported connection method " . $self->connection_method;
     return undef;
@@ -108,6 +113,7 @@ sub sc_status {
   } else {
     carp "SC status message didn't return ACS status response: $response_str";
   }
+  return $response;
 }
 
 sub update_acs_status {
@@ -117,7 +123,7 @@ sub update_acs_status {
     carp 'Can\'t update ACS status: invalid or missing ACS Status message';
     return undef;
   }
-  $self->online($acs_status->online);
+  $self->online_status($acs_status->online_status);
   $self->checkin_ok($acs_status->checkin_ok);
   $self->checkout_ok($acs_status->checkout_ok);
   $self->acs_renewal_policy($acs_status->acs_renewal_policy);
@@ -127,15 +133,18 @@ sub update_acs_status {
   if ($acs_status->retries_allowed != 999) {
     $self->retries_allowed($acs_status->retries_allowed);
   }
-  $self->sip_version($acs_status->protocol_version);
+  $self->sip_version($acs_status->sip_version);
+  $self->supported_messages($acs_status->supported_messages);
   $self->screen_message($acs_status->screen_message);
   $self->status_print_line($acs_status->print_line);
+  $self->vendor_information($acs_status->vendor_information);
   1;
 }
 
 sub _send_message {
   # private method to send message to ACS
   # return the raw response text to calling method for parsing
+  # TODO turn on error handling if the server sends sequence/checksum
   my ($self, $message) = @_;
   my $response;
   if ($self->connection_method eq 'socket') {
@@ -148,8 +157,14 @@ sub _send_message {
     # try retries_allowed, then croak
     my $attempt = 0;
     until ($response) {
+      $response = '';
       $connection->send($message_str . $self->eol);
-      $connection->recv($response,1024); # hopefully this buffer is large enough
+      my $buffer;
+      my $eol = $self->eol;
+      do {
+        $connection->recv($buffer,1024);
+        $response .= $buffer;
+      } while ($buffer !~ /$eol/);
       $response =~ s/[\r\n]//g;
       if (substr($response,0,2) eq '96') {
         if ($attempt == $self->retries_allowed) {
@@ -171,5 +186,26 @@ sub _send_message {
   }
   return $response;
 }
+
+# checksum utility
+# cribbed from GPLS (Evergreen folks - presumably Mike Rylander)
+sub _chksum {
+  my $s = shift;
+  my $sum = 0;
+  ## add up the ascii values of the characters
+  foreach my $val (unpack("C*", $s)) {
+    $sum += $val;
+  }
+  # get the bitwise complement
+  my $comp  = ~$sum;
+
+  ## add one to the complement
+  $comp ++;
+  my $hexcomp = $comp;
+  # get the hex value and return the 4 rightmost hex digits
+  my $hex = sprintf("%X", $hexcomp);
+  return (substr $hex,-4);
+}
+
 
 1;
