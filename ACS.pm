@@ -8,6 +8,8 @@ use Socket qw(:crlf);
 use IO::Socket::INET;
 use Biblio::3MSIP::Message::sc_status;
 use Biblio::3MSIP::Message::acs_status;
+use Biblio::3MSIP::Message::renew;
+use Biblio::3MSIP::Message::renew_response;
 $| = 1;
 
 
@@ -77,7 +79,14 @@ sub new {
       # should login before getting ACS status response
       carp "Login message unsupported";
     }
-    my $acs_status = $self->sc_status(0,$self->print_width,$self->sip_version);
+    my $sc_status = Biblio::3MSIP::Message::sc_status->new(
+      {
+        status_code => 0,
+        print_width => $self->print_width,
+        sip_version => $self->sip_version
+      }
+    );
+    my $acs_status = $self->sc_status($sc_status);
     if ($acs_status) {
       $self->update_acs_status($acs_status);      
     } else {
@@ -91,18 +100,12 @@ sub new {
   return $self;
 }
 
+# messages
 sub sc_status {
-  # create and send an SC status message
+  # send an SC status message
   # return ACS status message
-  my ($self,$status_code,$print_width,$sip_version) = @_;
+  my ($self,$sc_status) = @_;
   my $response;
-  my $sc_status = Biblio::3MSIP::Message::sc_status->new(
-    {
-      status_code => $status_code,
-      print_width => $print_width,
-      sip_version => $sip_version
-    }
-  );
   my $response_str = $self->_send_message($sc_status);
   if (substr($response_str,0,2) eq '98') {
     $response = Biblio::3MSIP::Message::acs_status->new(
@@ -116,6 +119,25 @@ sub sc_status {
   return $response;
 }
 
+sub renew {
+  # send a renew message
+  # return renew response message
+  my ($self,$renew) = @_;
+  my $response;
+  my $response_str = $self->_send_message($renew);
+  if (substr($response_str,0,2) eq '30') {
+    $response = Biblio::3MSIP::Message::renew_response->new(
+      {
+        message_text => substr($response_str,2)
+      }
+    );
+  } else {
+    carp "Renew message didn't return renew response: $response_str";
+  }
+  return $response;
+}
+
+# other methods
 sub update_acs_status {
   # update status parameters based on ACS status message
   my ($self,$acs_status) = @_;

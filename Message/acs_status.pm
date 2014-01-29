@@ -65,7 +65,7 @@ sub new {
     }
     $self->acs_timeout(substr($fixed,6,3)/10);
     $self->retries_allowed(substr($fixed,9,3)+0);
-    $self->date_time($self->convert_datetime_sync(substr($fixed,12,18)));
+    $self->date_time($self->to_datetime(substr($fixed,12,18)));
     $self->sip_version(substr($fixed,30,4));
     # parse variable-length fields
     my @variable = split(/\|/,substr($self->message_text,34));
