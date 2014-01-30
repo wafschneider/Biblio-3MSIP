@@ -123,6 +123,7 @@ sub renew {
   # send a renew message
   # return renew response message
   my ($self,$renew) = @_;
+  $renew->institution_id($self->institution_id) unless $renew->institution_id;
   my $response;
   my $response_str = $self->_send_message($renew);
   if (substr($response_str,0,2) eq '30') {
@@ -160,6 +161,8 @@ sub update_acs_status {
   $self->screen_message($acs_status->screen_message);
   $self->status_print_line($acs_status->print_line);
   $self->vendor_information($acs_status->vendor_information);
+  # update institution id if not already defined
+  $self->institution_id($acs_status->institution_id) unless $self->institution_id;
   1;
 }
 
