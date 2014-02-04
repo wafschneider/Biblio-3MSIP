@@ -38,6 +38,8 @@ has screen_message => ( is => 'rw', isa => 'ArrayRef' );
 has status_print_line => ( is => 'rw', isa => 'ArrayRef' );
 has vendor_information => ( is => 'rw', isa => 'Str' );
 has print_width => ( is => 'rw', isa => 'Int' );
+has connected => ( is => 'rw', isa => 'Bool');
+has connection_timeout => ( is => 'rw', isa => 'Num');
 
 # defaults
 my $default_sip_version = '2.00';
@@ -45,6 +47,7 @@ my $default_connection_method = 'socket';
 my $default_eol = $CR;
 my $default_retries_allowed = 3;
 my $default_print_width = 40;
+my $default_connection_timeout = 10;
 
 # override new
 sub new {
@@ -52,6 +55,7 @@ sub new {
   my $class = ref($invocant) || $invocant;
   my $self = $class->SUPER::new(@_);
   $self->{'connection_method'} = $default_connection_method unless $self->connection_method;
+  $self->connection_timeout($default_connection_timeout) unless $self->connection_timeout;
   $self->sip_version($default_sip_version) unless $self->sip_version;
   $self->eol($default_eol) unless $self->eol;
   $self->retries_allowed($default_retries_allowed) unless $self->retries_allowed;
@@ -66,32 +70,25 @@ sub new {
       carp "Can't create ACS object: no port number";
       return undef;
     }
-    my $socket;
-    unless ($socket = IO::Socket::INET->new( PeerAddr => $self->host,
-                                             PeerPort => $self->port,
-                                             Proto => 'tcp' )) {
-      carp "Can't create ACS object: couldn't connect to " . $self->host . ":" . $self->port . " : $!";
-      return undef;
-    }
-    binmode($socket,':utf8');
+    my $socket = $self->_socket_connect();
     $self->{'connection'} = $socket;
-    if ($self->user || $self->password) {
-      # should login before getting ACS status response
-      carp "Login message unsupported";
-    }
-    my $sc_status = Biblio::3MSIP::Message::sc_status->new(
-      {
-        status_code => 0,
-        print_width => $self->print_width,
-        sip_version => $self->sip_version
+    if ($self->{'connection'}) {
+      binmode($self->{'connection'},':utf8');
+      if ($self->user || $self->password) {
+        # should login before getting ACS status response
+        carp "Login message unsupported";
       }
-    );
-    my $acs_status = $self->sc_status($sc_status);
-    if ($acs_status) {
-      $self->update_acs_status($acs_status);      
-    } else {
-      carp "Can't create ACS object: No ACS Status message";
-      return undef;
+      my $sc_status = Biblio::3MSIP::Message::sc_status->new(
+        {
+          status_code => 0,
+          print_width => $self->print_width,
+          sip_version => $self->sip_version
+        }
+      );
+      my $acs_status = $self->sc_status($sc_status);
+      if ($acs_status) {
+        $self->update_acs_status($acs_status);      
+      }
     }
   } else {
     carp "Can't create ACS object: unsupported connection method " . $self->connection_method;
@@ -107,14 +104,14 @@ sub sc_status {
   my ($self,$sc_status) = @_;
   my $response;
   my $response_str = $self->_send_message($sc_status);
-  if (substr($response_str,0,2) eq '98') {
+  if ($response_str && substr($response_str,0,2) eq '98') {
     $response = Biblio::3MSIP::Message::acs_status->new(
     {
       message_text => substr($response_str,2)
     }
     );
   } else {
-    carp "SC status message didn't return ACS status response: $response_str";
+    carp "SC status message didn't return ACS status response";
   }
   return $response;
 }
@@ -126,19 +123,55 @@ sub renew {
   $renew->institution_id($self->institution_id) unless $renew->institution_id;
   my $response;
   my $response_str = $self->_send_message($renew);
-  if (substr($response_str,0,2) eq '30') {
+  if ($response_str && substr($response_str,0,2) eq '30') {
     $response = Biblio::3MSIP::Message::renew_response->new(
       {
         message_text => substr($response_str,2)
       }
     );
   } else {
-    carp "Renew message didn't return renew response: $response_str";
+    carp "Renew message didn't return renew response";
   }
   return $response;
 }
 
+# HERE I AM
+sub hold {
+  # send a hold message
+  # return a hold response message
+  1;
+}
+
 # other methods
+
+# override connected accessor
+sub connected {
+  my $self = shift;
+  $self->{connected} = undef;
+  if ($self->connection_method eq 'socket') {
+    if ($self->{connection}) {
+      if ($self->{connection}->connected) {
+#        local $SIG{PIPE} = sub { $self->{connection}->shutdown(2); undef($self->{connection}); undef($self->{connected}); };
+#        local $SIG{PIPE} = sub { croak "SIG_PIPE received"; };
+#        for (my $i = 0; $i < 2; $i++) {
+#          $self->{connection}->send('');
+#          my $junk;
+#          $self->{connection}->recv($junk,0);
+#        }
+#        if ($self->{connection}) {
+          $self->{connected} = 1;
+#        }
+      } else {
+        $self->{connection}->shutdown(2);
+        undef($self->{connection});
+      }
+    }
+  } else {
+    carp "Can't return connected status: Unsupported connection method " . $self->connection_method;
+  }
+  return $self->{connected};
+}
+
 sub update_acs_status {
   # update status parameters based on ACS status message
   my ($self,$acs_status) = @_;
@@ -166,6 +199,18 @@ sub update_acs_status {
   1;
 }
 
+sub _socket_connect {
+  my $self = shift;
+  my $socket;
+  unless ($socket = IO::Socket::INET->new( PeerAddr => $self->host,
+                                           PeerPort => $self->port,
+                                           Proto => 'tcp',
+                                           Timeout => $self->connection_timeout )) {
+    carp "Couldn't connect to " . $self->host . ":" . $self->port . " : $!";
+  }
+  return $socket;
+}
+
 sub _send_message {
   # private method to send message to ACS
   # return the raw response text to calling method for parsing
@@ -173,6 +218,15 @@ sub _send_message {
   my ($self, $message) = @_;
   my $response;
   if ($self->connection_method eq 'socket') {
+    unless ($self->connected) {
+      my $socket = $self->_socket_connect();
+      if ($socket) {
+        binmode($socket,':utf8');
+        $self->{connection} = $socket;
+      } else {
+        return undef;
+      }
+    }
     my $connection = $self->{'connection'};
     my $message_str = sprintf('%02u',$message->message_identifier) . $message->message_text; 
     if ($self->error_detection) {
