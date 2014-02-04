@@ -151,17 +151,9 @@ sub connected {
   if ($self->connection_method eq 'socket') {
     if ($self->{connection}) {
       if ($self->{connection}->connected) {
-#        local $SIG{PIPE} = sub { $self->{connection}->shutdown(2); undef($self->{connection}); undef($self->{connected}); };
-#        local $SIG{PIPE} = sub { croak "SIG_PIPE received"; };
-#        for (my $i = 0; $i < 2; $i++) {
-#          $self->{connection}->send('');
-#          my $junk;
-#          $self->{connection}->recv($junk,0);
-#        }
-#        if ($self->{connection}) {
-          $self->{connected} = 1;
-#        }
+        $self->{connected} = 1;
       } else {
+        carp "Connection lost";
         $self->{connection}->shutdown(2);
         undef($self->{connection});
       }
