@@ -31,7 +31,7 @@ sub new {
   my $invocant = shift;
   my $class = ref($invocant) || $invocant;
   my $self = $class->SUPER::new(@_);
-  $self->message_identifier(98);
+  $self->message_identifier(30);
   if ($self->message_text) {
     # parse fixed fields
     my $fixed = substr($self->message_text,0,22);

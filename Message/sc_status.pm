@@ -23,12 +23,12 @@ sub new {
 sub message_text {
   my $self = shift;
   my $message_text = '';
-  if ($self->status_code) {
+  if (defined($self->status_code)) {
     $message_text .= sprintf('%1u',$self->status_code);
   } else {
     croak "No status_code in SC status message (required field)";
   }
-  if ($self->print_width) {
+  if (defined($self->print_width)) {
     $message_text .= sprintf('%03u',$self->print_width);
   } else {
     croak "No print_width in SC status message (required field)";

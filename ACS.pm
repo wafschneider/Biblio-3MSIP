@@ -11,6 +11,7 @@ use Biblio::3MSIP::Message::acs_status;
 use Biblio::3MSIP::Message::renew;
 use Biblio::3MSIP::Message::renew_response;
 use Biblio::3MSIP::Message::hold;
+use Biblio::3MSIP::Message::hold_response;
 $| = 1;
 
 
@@ -140,7 +141,19 @@ sub renew {
 sub hold {
   # send a hold message
   # return a hold response message
-  1;
+  my ($self,$hold) = @_;
+  $hold->institution_id($self->institution_id) unless $hold->institution_id;
+  my $response;
+  my $response_str = $self->_send_message($hold);
+  if ($response_str && substr($response_str,0,2) eq '16') {
+    $response = Biblio::3MSIP::Message::hold_response->new(
+      {
+        message_text => substr($response_str,2)
+      }
+    );
+  } else {
+    carp "Hold message didn't return hold response";
+  }
 }
 
 # other methods
@@ -211,6 +224,7 @@ sub _send_message {
   my ($self, $message) = @_;
   my $response;
   if ($self->connection_method eq 'socket') {
+    # try to reconnect if socket is disconnected
     unless ($self->connected) {
       my $socket = $self->_socket_connect();
       if ($socket) {
