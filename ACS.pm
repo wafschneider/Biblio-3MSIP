@@ -10,6 +10,7 @@ use Biblio::3MSIP::Message::sc_status;
 use Biblio::3MSIP::Message::acs_status;
 use Biblio::3MSIP::Message::renew;
 use Biblio::3MSIP::Message::renew_response;
+use Biblio::3MSIP::Message::hold;
 $| = 1;
 
 

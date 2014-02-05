@@ -34,23 +34,45 @@ sub to_datetime_str {
 sub fee_type_text {
   # look up fee type text
   my $self = shift;
+  my $fee_type_text;
   if ($self->fee_type) {
-    my @fee_type = ('other/unknown','administrative','damage','overdue','processing','rental','replacement','computer access charge','hold fee');
-    return $fee_type[$self->fee_type - 1];
-  } else {
-    return undef;
-  } 
+    my @fee_type = (undef,'other/unknown','administrative','damage','overdue','processing','rental','replacement','computer access charge','hold fee');
+    $fee_type_text = $fee_type[$self->fee_type]?$fee_type[$self->fee_type]:undef;
+  }
+  return $fee_type_text;
 }
 
 sub media_type_text {
   # look up media type text
   my $self = shift;
+  my $media_type_text;
   if ($self->media_type) {
     my @media_type = ('other','book','magazine','bound journal','audio tape','video tape','CD/CDROM','diskette','book with diskette','book with CD','book with audio tape');
-    return $media_type[$self->media_type];
-  } else {
-    return undef;
+    $media_type_text = $media_type[$self->media_type]?$media_type[$self->media_type]:undef;
   }
+  return $media_type_text;
+}
+
+sub hold_mode_text {
+  # look up hold mode text
+  my $self = shift;
+  my $hold_mode_text;
+  if ($self->hold_mode) {
+    my %hold_mode= ('+','add','-','delete','*','change');
+    $hold_mode_text = $hold_mode{$self->hold_mode}?$hold_mode{$self->hold_mode}:undef;
+  }
+  return $hold_mode_text;
+}
+
+sub hold_type {
+  # look up hold type text
+  my $self = shift;
+  my $hold_type_text;
+  if ($self->hold_type) {
+    my @hold_type = (undef,'other','any copy','specific copy','any copy at a single location');
+    $hold_type_text = $hold_type[$self->hold_type]?$hold_type[$self->hold_type]:undef;
+  }
+  return $hold_type_text;
 }
 
 1;

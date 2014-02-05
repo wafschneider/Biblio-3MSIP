@@ -22,7 +22,23 @@ sub new {
 # override message_text accessor
 sub message_text {
   my $self = shift;
-  $self->{'message_text'} = sprintf('%1u',$self->status_code) . sprintf('%03u',$self->print_width) . $self->sip_version;
+  my $message_text = '';
+  if ($self->status_code) {
+    $message_text .= sprintf('%1u',$self->status_code);
+  } else {
+    croak "No status_code in SC status message (required field)";
+  }
+  if ($self->print_width) {
+    $message_text .= sprintf('%03u',$self->print_width);
+  } else {
+    croak "No print_width in SC status message (required field)";
+  }
+  if ($self->sip_version) {
+    $message_text .= $self->sip_version;
+  } else {
+    croak "No sip_version in SC status message (required field)";
+  }
+  $self->{'message_text'} = $message_text;
   return $self->{'message_text'};
 }
 
