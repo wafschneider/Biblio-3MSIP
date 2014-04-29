@@ -154,6 +154,7 @@ sub hold {
   } else {
     carp "Hold message didn't return hold response";
   }
+  return $response;
 }
 
 # other methods
