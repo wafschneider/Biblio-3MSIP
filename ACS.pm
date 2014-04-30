@@ -6,6 +6,7 @@ use Carp;
 use Class::Accessor 'antlers';
 use Socket qw(:crlf);
 use IO::Socket::INET;
+use IO::Select;
 use Biblio::3MSIP::Message::sc_status;
 use Biblio::3MSIP::Message::acs_status;
 use Biblio::3MSIP::Message::renew;
@@ -42,6 +43,7 @@ has vendor_information => ( is => 'rw', isa => 'Str' );
 has print_width => ( is => 'rw', isa => 'Int' );
 has connected => ( is => 'rw', isa => 'Bool');
 has connection_timeout => ( is => 'rw', isa => 'Num');
+has io_select => ( is => 'ro', isa => 'Object' );
 
 # defaults
 my $default_sip_version = '2.00';
@@ -63,7 +65,7 @@ sub new {
   $self->retries_allowed($default_retries_allowed) unless $self->retries_allowed;
   $self->print_width($default_print_width) unless $self->print_width;
   $self->sequence(0);
-    if ($self->connection_method eq 'socket') {
+  if ($self->connection_method eq 'socket') {
     unless ($self->host) {
       carp "Can't create ACS object: no host name or address";
       return undef;
@@ -75,6 +77,7 @@ sub new {
     my $socket = $self->_socket_connect();
     $self->{'connection'} = $socket;
     if ($self->{'connection'}) {
+      $self->{io_select} = IO::Select->new($self->{connection});
       binmode($self->{'connection'},':utf8');
       if ($self->user || $self->password) {
         # should login before getting ACS status response
@@ -137,7 +140,6 @@ sub renew {
   return $response;
 }
 
-# HERE I AM
 sub hold {
   # send a hold message
   # return a hold response message
@@ -166,11 +168,41 @@ sub connected {
   if ($self->connection_method eq 'socket') {
     if ($self->{connection}) {
       if ($self->{connection}->connected) {
-        $self->{connected} = 1;
+        if ($self->{io_select}->can_write($self->{connection_timeout})) {
+          # try to send a message
+          my $sc_status = Biblio::3MSIP::Message::sc_status->new(
+            {
+              status_code => 0,
+              print_width => $self->print_width,
+              sip_version => $self->sip_version
+            }
+          );
+          my $message_str = sprintf('%02u',$sc_status->message_identifier) . $sc_status->message_text;
+          $self->{connection}->send($message_str . $self->eol);
+          if ($self->{io_select}->can_read($self->{connection_timeout})) {
+            my $buffer;
+            my $eol = $self->eol;
+            do {
+              $self->{connection}->recv($buffer,1024);
+            } while ($buffer !~ /$eol/);
+            $self->{connected} = 1;
+          } else {
+            carp "Connection lost";
+            $self->{connection}->shutdown(2);
+            undef($self->{connection});
+            undef($self->{io_select});
+          }
+        } else {
+          carp "Connection lost";
+          $self->{connection}->shutdown(2);
+          undef($self->{connection});
+          undef($self->{io_select});
+        }
       } else {
         carp "Connection lost";
         $self->{connection}->shutdown(2);
         undef($self->{connection});
+        undef($self->{io_select});
       }
     }
   } else {
@@ -212,7 +244,8 @@ sub _socket_connect {
   unless ($socket = IO::Socket::INET->new( PeerAddr => $self->host,
                                            PeerPort => $self->port,
                                            Proto => 'tcp',
-                                           Timeout => $self->connection_timeout )) {
+                                           Timeout => $self->connection_timeout,
+                                           Blocking => 0 )) {
     carp "Couldn't connect to " . $self->host . ":" . $self->port . " : $!";
   }
   return $socket;
@@ -227,10 +260,12 @@ sub _send_message {
   if ($self->connection_method eq 'socket') {
     # try to reconnect if socket is disconnected
     unless ($self->connected) {
+      carp "Reopening connection to ACS server...";
       my $socket = $self->_socket_connect();
       if ($socket) {
         binmode($socket,':utf8');
         $self->{connection} = $socket;
+        $self->{io_select} = IO::Select->new($self->{connection});
       } else {
         return undef;
       }
